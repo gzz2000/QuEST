@@ -8,8 +8,8 @@ project(QuEST_Project)
 # ----- USER OPTIONS ----------------------------------------------------------
 # -----------------------------------------------------------------------------
 
-set(USER_SOURCE  "tutorial_example.c"  CACHE STRING "Source to build with QuEST library")
-set(OUTPUT_EXE   "demo"  CACHE STRING "Executable to compile to")
+# set(USER_SOURCE  "tutorial_example.c"  CACHE STRING "Source to build with QuEST library")
+# set(OUTPUT_EXE   "demo"  CACHE STRING "Executable to compile to")
 
 option(TESTING "Enable test suite functionality -- requires test suite available" ON)
 set(QuEST_UTIL_DIR_NAME "utilities" CACHE STRING
@@ -34,16 +34,27 @@ endif()
 # ----- USER EXECUTABLE -------------------------------------------------------
 # -----------------------------------------------------------------------------
 
-message(STATUS "Compiling ${USER_SOURCE} to executable ${OUTPUT_EXE}")
+# set the standard for compiling ASC user code
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} \
+    -std=c99"
+)
 
+macro(add_user_executable USER_SOURCE OUTPUT_EXE)
+  message(STATUS "Compiling ${USER_SOURCE} to executable ${OUTPUT_EXE}")
 
-# Create user executable
-add_executable(${OUTPUT_EXE} ${USER_SOURCE})
-add_executable(${OUTPUT_EXE}_gpu ${USER_SOURCE})
+  # Create user executable
+  add_executable(${OUTPUT_EXE} ${USER_SOURCE})
+  add_executable(${OUTPUT_EXE}_gpu ${USER_SOURCE})
 
-# Link libraries to user executable, including QuEST library
-target_link_libraries(${OUTPUT_EXE} QuEST m)
-target_link_libraries(${OUTPUT_EXE}_gpu QuEST_gpu m)
+  # Link libraries to user executable, including QuEST library
+  target_link_libraries(${OUTPUT_EXE} QuEST m)
+  target_link_libraries(${OUTPUT_EXE}_gpu QuEST_gpu m)
+endmacro()
+
+add_user_executable("examples/tutorial_example.c" "demo")
+add_user_executable("datacases_asc20/preliminary/GHZ_QFT.c" "GHZ_QFT")
+add_user_executable("datacases_asc20/preliminary/random.c" "random")
+add_user_executable("datacases_asc20/preliminary/GHZ_QFT_29.c" "GHZ_QFT_29")
 
 # -----------------------------------------------------------------------------
 # ----- UTILS -----------------------------------------------------------------
