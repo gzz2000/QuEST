@@ -27,9 +27,9 @@ option(DISTRIBUTED "Whether the program will be run in distributed mode using MP
 set(PRECISION 2 CACHE STRING
     "Whether to use single, double or quad floating point precision in the state vector. {1,2,4}")
 
-option(GPUACCELERATED "Whether to program will run on GPU. Set to 1 to enable" 0)
+option(GPUACCELERATED "Whether to program will run on GPU. Set to 1 to enable" 1)
 
-set(GPU_COMPUTE_CAPABILITY 30 CACHE STRING "GPU hardware dependent, lookup at https://developer.nvidia.com/cuda-gpus. Write without fullstop")
+set(GPU_COMPUTE_CAPABILITY "60,61,62,70,80" CACHE STRING "GPU hardware dependent, lookup at https://developer.nvidia.com/cuda-gpus. Write without fullstop. You can specify multiple target architectures by splitting numbers with ';' (added by GZZ).")
 
 
 
@@ -120,7 +120,7 @@ endif()
 
 # ----- OPENMP ----------------------------------------------------------------
 
-if (${MULTITHREADED} AND NOT ${GPUACCELERATED})
+if (${MULTITHREADED})
     find_package(OpenMP)
     if (OPENMP_FOUND)
         set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
@@ -131,23 +131,28 @@ endif()
 # ----- CUDA FLAGS ------------------------------------------------------------
 
 if (GPUACCELERATED)
+  # string(REPLACE "," ";" GPU_COMPUTE_CAPABILITY ${GPU_COMPUTE_CAPABILITY})
+  message(STATUS "ALL architectures: ${GPU_COMPUTE_CAPABILITY}")
+  foreach(SINGLE_GPU_COMPUTE_CAPABILITY IN LISTS GPU_COMPUTE_CAPABILITY)
+    message(STATUS "Support GPU architecture ${SINGLE_GPU_COMPUTE_CAPABILITY}")
     set (CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} \
-        -arch=compute_${GPU_COMPUTE_CAPABILITY} -code=sm_${GPU_COMPUTE_CAPABILITY}"
-    )
-    if ("${CMAKE_BUILD_TYPE}" STREQUAL "Release")
-        set (CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} \
+        -gencode=arch=compute_${SINGLE_GPU_COMPUTE_CAPABILITY},code=sm_${SINGLE_GPU_COMPUTE_CAPABILITY}")
+  endforeach()
+
+  if ("${CMAKE_BUILD_TYPE}" STREQUAL "Release")
+    set (CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} \
             -O2"
-        )
-    endif()
-    if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
-        set (CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} \
+      )
+  endif()
+  if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
+    set (CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} \
             -G -g -lineinfo"
-        )
-    else()
-        set (CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} \
+      )
+  else()
+    set (CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} \
             -O2"
-        )
-    endif()
+      )
+  endif()
 endif()
 
 
@@ -205,7 +210,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} \
 
 # Use -O2 for all but debug mode by default 
 if (NOT("${CMAKE_BUILD_TYPE}" STREQUAL "Debug"))
-    set(CMAKE_CXX_FLAGS "${CMAKE_C_FLAGS} \
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} \
         -O2"
     )
 endif()
@@ -254,7 +259,7 @@ if (VERBOSE_CMAKE)
         message("   C++ debug flags: ${CMAKE_CXX_FLAGS_DEBUG}")
     endif()
     if ("${CMAKE_BUILD_TYPE}" STREQUAL "Release")
-        message("   C release flags: ${CMAKE_CXX_FLAGS_RELEASE}")
+        message("   C release flags: ${CMAKE_C_FLAGS_RELEASE}")
         message("   C++ release flags: ${CMAKE_CXX_FLAGS_RELEASE}")
     endif()
 endif()
@@ -263,20 +268,29 @@ endif()
 # ----- BUILD LIBRARY ---------------------------------------------------------
 # -----------------------------------------------------------------------------
 
+# Update 2020.12.26 GZZ: when GPUACCELERATED, build both CPU and GPU.
+
 
 add_subdirectory(src)
 
 if (GPUACCELERATED)
-    cuda_add_library(QuEST SHARED
-        ${QuEST_SRC}
-    )
-else ()
-    add_library(QuEST SHARED
-        ${QuEST_SRC}
+    cuda_add_library(QuEST_gpu SHARED
+        ${QuEST_SRC_gpu}
     )
 endif()
 
+add_library(QuEST SHARED
+    ${QuEST_SRC}
+)
+
 # ----- Location of header files ----------------------------------------------
+
+if (GPUACCELERATED)
+  target_include_directories(QuEST_gpu
+    PRIVATE src
+    PUBLIC include
+    )
+endif()
 
 target_include_directories(QuEST 
     PRIVATE src
@@ -285,6 +299,13 @@ target_include_directories(QuEST
 
 
 # ----- Definitions -----------------------------------------------------------
+
+if (GPUACCELERATED)
+  target_compile_definitions(QuEST_gpu
+    PRIVATE
+    QuEST_PREC=${PRECISION}
+    )
+endif()
 
 target_compile_definitions(QuEST
     PRIVATE
@@ -297,9 +318,17 @@ target_compile_definitions(QuEST
 
 # ----- MPI -------------------------------------------------------------------
 
+if (GPUACCELERATED)
+  target_link_libraries(QuEST_gpu ${MPI_C_LIBRARIES})
+endif()
+
 target_link_libraries(QuEST ${MPI_C_LIBRARIES})
 
 # ----- GPU -------------------------------------------------------------------
+
+if (GPUACCELERATED)
+  target_link_libraries(QuEST_gpu ${CUDA_LIBRARIES})
+endif()
 
 target_link_libraries(QuEST ${CUDA_LIBRARIES})
 

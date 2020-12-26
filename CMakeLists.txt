@@ -39,9 +39,11 @@ message(STATUS "Compiling ${USER_SOURCE} to executable ${OUTPUT_EXE}")
 
 # Create user executable
 add_executable(${OUTPUT_EXE} ${USER_SOURCE})
+add_executable(${OUTPUT_EXE}_gpu ${USER_SOURCE})
 
 # Link libraries to user executable, including QuEST library
 target_link_libraries(${OUTPUT_EXE} QuEST m)
+target_link_libraries(${OUTPUT_EXE}_gpu QuEST_gpu m)
 
 # -----------------------------------------------------------------------------
 # ----- UTILS -----------------------------------------------------------------

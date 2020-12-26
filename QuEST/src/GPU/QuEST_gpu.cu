@@ -12,6 +12,7 @@
 # include <stdlib.h>
 # include <stdio.h>
 # include <math.h>
+# include <omp.h>
 
 # define REDUCE_SHARED_SIZE 512
 # define DEBUG 0
