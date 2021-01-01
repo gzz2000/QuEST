@@ -20,7 +20,7 @@
 
 static __device__ int extractBit (int locationOfBitFromRight, long long int theEncodedNumber)
 {
-    return (theEncodedNumber & ( 1LL << locationOfBitFromRight )) >> locationOfBitFromRight;
+    return (theEncodedNumber >> locationOfBitFromRight ) & 1;
 }
 
 #ifdef __cplusplus

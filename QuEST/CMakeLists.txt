@@ -131,7 +131,7 @@ endif()
 # ----- CUDA FLAGS ------------------------------------------------------------
 
 if (GPUACCELERATED)
-  # string(REPLACE "," ";" GPU_COMPUTE_CAPABILITY ${GPU_COMPUTE_CAPABILITY})
+  string(REPLACE "," ";" GPU_COMPUTE_CAPABILITY ${GPU_COMPUTE_CAPABILITY})
   message(STATUS "ALL architectures: ${GPU_COMPUTE_CAPABILITY}")
   foreach(SINGLE_GPU_COMPUTE_CAPABILITY IN LISTS GPU_COMPUTE_CAPABILITY)
     message(STATUS "Support GPU architecture ${SINGLE_GPU_COMPUTE_CAPABILITY}")
