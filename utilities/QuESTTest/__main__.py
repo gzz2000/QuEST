@@ -21,6 +21,7 @@ mutExc = parser.add_mutually_exclusive_group()
 # Need to pull some trickery to allow QuESTLib redirection. Probably cleaner way to do this, but...
 mutExc.add_argument('-h','--help', help="Show this help message and exit", action='store_true')
 parser.add_argument('-Q','--questpath', help="Define alternative QuEST library location. The library must be named 'libQuEST.so' located in the specified directory to be found. Default=%(default)s", default=QuESTPath)
+parser.add_argument('-N','--questname', help="Define alternative QuEST library file name. default is %(default)s", default='libQuEST.so')
 
 # Just parse -Q
 QuESTPath = parser.parse_known_args()
@@ -29,7 +30,8 @@ QuESTPath = parser.parse_known_args()
 
 try:
     # Load QuEST Library if not printing help
-    init_QuESTLib(QuESTPath[0].questpath)
+    init_QuESTLib(QuESTPath[0].questpath, QuESTPath[0].questname)
+    # print('Loading library', QuESTPath[0].questpath, QuESTPath[0].questname)
 
     # Import remaining libraries
     from QuESTTest.QuESTCore import *

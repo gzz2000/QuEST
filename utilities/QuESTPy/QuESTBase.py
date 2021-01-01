@@ -6,9 +6,9 @@ import importlib
 
 QuESTLib = None
 QuESTVer = ""
-def init_QuESTLib(QuESTPath = ""):
+def init_QuESTLib(QuESTPath = "", QuESTName = "libQuEST.so"):
     global QuESTLib
-    QuESTPath = QuESTPath.rstrip('/ ') + "/libQuEST.so"
+    QuESTPath = QuESTPath.rstrip('/ ') + "/" + QuESTName
     if not os.path.isfile(QuESTPath):
         raise FileNotFoundError(fnfWarning.format(QuESTPath))
     QuESTLib = CDLL(QuESTPath)

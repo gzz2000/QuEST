@@ -28,9 +28,25 @@ extern "C" {
 #endif
     
 
+// Bit manipulation utilities
+// From QuEST_multigpu.cu
+// Original author being Jing Mai (probably)
+// Very useful for acceleration.
 
+__forceinline__ __device__ long long int insertZeroBit(long long int number,
+                                                       int index) {
+  long long int left, right;
+  left = (number >> index) << index;
+  right = number - left;
+  return (left << 1) ^ right;
+}
 
-
+__forceinline__ __device__ long long int insertTwoZeroBits(long long int number,
+                                                           int bit1, int bit2) {
+  int small = (bit1 < bit2) ? bit1 : bit2;
+  int big = (bit1 < bit2) ? bit2 : bit1;
+  return insertZeroBit(insertZeroBit(number, small), big);
+}
 
 void statevec_setAmps(Qureg qureg, long long int startInd, qreal* reals, qreal* imags, long long int numAmps) {
     
@@ -530,12 +546,8 @@ int statevec_compareStates(Qureg mq1, Qureg mq2, qreal precision){
 }
 
 __global__ void statevec_compactUnitaryKernel (Qureg qureg, const int rotQubit, Complex alpha, Complex beta){
-    // ----- sizes
-    long long int sizeBlock,                                           // size of blocks
-         sizeHalfBlock;                                       // size of blocks halved
     // ----- indices
-    long long int thisBlock,                                           // current block
-         indexUp,indexLo;                                     // current index and corresponding index in lower half block
+    long long int indexUp,indexLo;                            // current index and corresponding index in lower half block
 
     // ----- temp variables
     qreal   stateRealUp,stateRealLo,                             // storage for previous state values
@@ -543,9 +555,6 @@ __global__ void statevec_compactUnitaryKernel (Qureg qureg, const int rotQubit, 
     // ----- temp variables
     long long int thisTask;                                   // task based approach for expose loop with small granularity
     const long long int numTasks=qureg.numAmpsPerChunk>>1;
-
-    sizeHalfBlock = 1LL << rotQubit;                               // size of blocks halved
-    sizeBlock     = 2LL * sizeHalfBlock;                           // size of blocks
 
     // ---------------------------------------------------------------- //
     //            rotate                                                //
@@ -560,9 +569,8 @@ __global__ void statevec_compactUnitaryKernel (Qureg qureg, const int rotQubit, 
     thisTask = blockIdx.x*blockDim.x + threadIdx.x;
     if (thisTask>=numTasks) return;
 
-    thisBlock   = thisTask / sizeHalfBlock;
-    indexUp     = thisBlock*sizeBlock + thisTask%sizeHalfBlock;
-    indexLo     = indexUp + sizeHalfBlock;
+    indexUp     = insertZeroBit(thisTask, rotQubit);
+    indexLo     = indexUp | (1LL << rotQubit);
 
     // store current state vector values in temp variables
     stateRealUp = stateVecReal[indexUp];

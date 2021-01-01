@@ -27,6 +27,7 @@ if (NOT DEFINED ${QuEST_LIB_PATH})
     add_subdirectory(${QuEST_DIR})
     set(QuEST_LIB_PATH "${CMAKE_CURRENT_BINARY_DIR}/${QuEST_DIR}")
     set(QuEST_LIB_EXACT "${QuEST_LIB_PATH}/libQuEST.so")
+    set(QuEST_LIB_EXACT_GPU "${QuEST_LIB_PATH}/libQuEST_gpu.so")
 endif()
 
 
