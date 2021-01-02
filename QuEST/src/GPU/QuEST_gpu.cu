@@ -601,23 +601,15 @@ void statevec_compactUnitary(Qureg qureg, const int targetQubit, Complex alpha, 
 }
 
 __global__ void statevec_controlledCompactUnitaryKernel (Qureg qureg, const int controlQubit, const int targetQubit, Complex alpha, Complex beta){
-    // ----- sizes
-    long long int sizeBlock,                                           // size of blocks
-         sizeHalfBlock;                                       // size of blocks halved
     // ----- indices
-    long long int thisBlock,                                           // current block
-         indexUp,indexLo;                                     // current index and corresponding index in lower half block
+    long long int indexUp,indexLo;                    // current index and corresponding index in lower half block
 
     // ----- temp variables
     qreal   stateRealUp,stateRealLo,                             // storage for previous state values
            stateImagUp,stateImagLo;                             // (used in updates)
     // ----- temp variables
     long long int thisTask;                                   // task based approach for expose loop with small granularity
-    const long long int numTasks=qureg.numAmpsPerChunk>>1;
-    int controlBit;
-
-    sizeHalfBlock = 1LL << targetQubit;                               // size of blocks halved
-    sizeBlock     = 2LL * sizeHalfBlock;                           // size of blocks
+    const long long int numTasks=qureg.numAmpsPerChunk>>2;
 
     // ---------------------------------------------------------------- //
     //            rotate                                                //
@@ -632,38 +624,34 @@ __global__ void statevec_controlledCompactUnitaryKernel (Qureg qureg, const int 
     thisTask = blockIdx.x*blockDim.x + threadIdx.x;
     if (thisTask>=numTasks) return;
 
-    thisBlock   = thisTask / sizeHalfBlock;
-    indexUp     = thisBlock*sizeBlock + thisTask%sizeHalfBlock;
-    indexLo     = indexUp + sizeHalfBlock;
+    indexUp     = insertTwoZeroBits(thisTask, controlQubit, targetQubit) | (1LL << controlQubit);
+    indexLo     = indexUp | (1LL << targetQubit);
 
-    controlBit = extractBit(controlQubit, indexUp);
-    if (controlBit){
-        // store current state vector values in temp variables
-        stateRealUp = stateVecReal[indexUp];
-        stateImagUp = stateVecImag[indexUp];
+    // store current state vector values in temp variables
+    stateRealUp = stateVecReal[indexUp];
+    stateImagUp = stateVecImag[indexUp];
 
-        stateRealLo = stateVecReal[indexLo];
-        stateImagLo = stateVecImag[indexLo];
+    stateRealLo = stateVecReal[indexLo];
+    stateImagLo = stateVecImag[indexLo];
 
-        // state[indexUp] = alpha * state[indexUp] - conj(beta)  * state[indexLo]
-        stateVecReal[indexUp] = alphaReal*stateRealUp - alphaImag*stateImagUp 
-            - betaReal*stateRealLo - betaImag*stateImagLo;
-        stateVecImag[indexUp] = alphaReal*stateImagUp + alphaImag*stateRealUp 
-            - betaReal*stateImagLo + betaImag*stateRealLo;
+    // state[indexUp] = alpha * state[indexUp] - conj(beta)  * state[indexLo]
+    stateVecReal[indexUp] = alphaReal*stateRealUp - alphaImag*stateImagUp 
+        - betaReal*stateRealLo - betaImag*stateImagLo;
+    stateVecImag[indexUp] = alphaReal*stateImagUp + alphaImag*stateRealUp 
+        - betaReal*stateImagLo + betaImag*stateRealLo;
 
-        // state[indexLo] = beta  * state[indexUp] + conj(alpha) * state[indexLo]
-        stateVecReal[indexLo] = betaReal*stateRealUp - betaImag*stateImagUp 
-            + alphaReal*stateRealLo + alphaImag*stateImagLo;
-        stateVecImag[indexLo] = betaReal*stateImagUp + betaImag*stateRealUp 
-            + alphaReal*stateImagLo - alphaImag*stateRealLo;
-    }
+    // state[indexLo] = beta  * state[indexUp] + conj(alpha) * state[indexLo]
+    stateVecReal[indexLo] = betaReal*stateRealUp - betaImag*stateImagUp 
+        + alphaReal*stateRealLo + alphaImag*stateImagLo;
+    stateVecImag[indexLo] = betaReal*stateImagUp + betaImag*stateRealUp 
+        + alphaReal*stateImagLo - alphaImag*stateRealLo;
 }
 
 void statevec_controlledCompactUnitary(Qureg qureg, const int controlQubit, const int targetQubit, Complex alpha, Complex beta) 
 {
     int threadsPerCUDABlock, CUDABlocks;
     threadsPerCUDABlock = 128;
-    CUDABlocks = ceil((qreal)(qureg.numAmpsPerChunk>>1)/threadsPerCUDABlock);
+    CUDABlocks = ceil((qreal)(qureg.numAmpsPerChunk>>2)/threadsPerCUDABlock);
     statevec_controlledCompactUnitaryKernel<<<CUDABlocks, threadsPerCUDABlock>>>(qureg, controlQubit, targetQubit, alpha, beta);
 }
 
