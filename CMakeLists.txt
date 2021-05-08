@@ -45,11 +45,15 @@ macro(add_user_executable USER_SOURCE OUTPUT_EXE)
 
   # Create user executable
   add_executable(${OUTPUT_EXE} ${USER_SOURCE})
-  add_executable(${OUTPUT_EXE}_gpu ${USER_SOURCE})
+  if (GPUACCELERATED)
+    add_executable(${OUTPUT_EXE}_gpu ${USER_SOURCE})
+  endif()
 
   # Link libraries to user executable, including QuEST library
   target_link_libraries(${OUTPUT_EXE} QuEST m)
-  target_link_libraries(${OUTPUT_EXE}_gpu QuEST_gpu m)
+  if (GPUACCELERATED)
+    target_link_libraries(${OUTPUT_EXE}_gpu QuEST_gpu m)
+  endif()
 endmacro()
 
 add_user_executable("examples/tutorial_example.c" "demo")
