@@ -60,6 +60,7 @@ add_user_executable("examples/tutorial_example.c" "demo")
 add_user_executable("datacases_asc20/preliminary/GHZ_QFT.c" "GHZ_QFT")
 add_user_executable("datacases_asc20/preliminary/random.c" "random")
 add_user_executable("datacases_asc20/preliminary/GHZ_QFT_29.c" "GHZ_QFT_29")
+add_user_executable("datacases_asc20/preliminary/GHZ_QFT_27.c" "GHZ_QFT_27")
 
 # -----------------------------------------------------------------------------
 # ----- UTILS -----------------------------------------------------------------
