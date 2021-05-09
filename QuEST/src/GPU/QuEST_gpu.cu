@@ -13,6 +13,7 @@
 # include <stdio.h>
 # include <math.h>
 # include <omp.h>
+#include <assert.h>
 
 # define REDUCE_SHARED_SIZE 512
 # define DEBUG 0
@@ -30,6 +31,7 @@ extern "C" {
 #define MAX_GPUS 4
 
 int gpuDeviceCount;
+int deviceId[MAX_GPUS];
 cudaStream_t streams[MAX_GPUS];
 
 // Bit manipulation utilities
@@ -246,11 +248,12 @@ int GPUExists(void){
     cudaGetDeviceProperties(&properties, device);
     if (properties.major != 9999) { /* 9999 means emulation only */
       cudaSetDevice(device);
-      cudaStreamCreate(&streams[gpuDeviceCount]);
+      assert(cudaStreamCreate(&streams[gpuDeviceCount]) == cudaSuccess);
+      deviceId[gpuDeviceCount] = device;
       ++gpuDeviceCount;
     }
   }
-  cudaSetDevice(0);
+  cudaSetDevice(deviceId[0]);
   return gpuDeviceCount;
 }
 
@@ -606,7 +609,7 @@ void statevec_compactUnitary(Qureg qureg, const int targetQubit, Complex alpha, 
     statevec_compactUnitaryKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(qureg, targetQubit, alpha, beta);
 }
 
-__global__ void statevec_controlledCompactUnitaryKernel (Qureg qureg, const int controlQubit, const int targetQubit, Complex alpha, Complex beta){
+__global__ void statevec_controlledCompactUnitaryKernel (Qureg qureg, const int controlQubit, const int targetQubit, Complex alpha, Complex beta, long long int taskStart, long long int numTasks){
     // ----- indices
     long long int indexUp,indexLo;                    // current index and corresponding index in lower half block
 
@@ -615,7 +618,6 @@ __global__ void statevec_controlledCompactUnitaryKernel (Qureg qureg, const int 
            stateImagUp,stateImagLo;                             // (used in updates)
     // ----- temp variables
     long long int thisTask;                                   // task based approach for expose loop with small granularity
-    const long long int numTasks=qureg.numAmpsPerChunk>>2;
 
     // ---------------------------------------------------------------- //
     //            rotate                                                //
@@ -629,6 +631,7 @@ __global__ void statevec_controlledCompactUnitaryKernel (Qureg qureg, const int 
 
     thisTask = blockIdx.x*blockDim.x + threadIdx.x;
     if (thisTask>=numTasks) return;
+    thisTask += taskStart;
 
     indexUp     = insertTwoZeroBits(thisTask, controlQubit, targetQubit) | (1LL << controlQubit);
     indexLo     = indexUp | (1LL << targetQubit);
@@ -655,10 +658,34 @@ __global__ void statevec_controlledCompactUnitaryKernel (Qureg qureg, const int 
 
 void statevec_controlledCompactUnitary(Qureg qureg, const int controlQubit, const int targetQubit, Complex alpha, Complex beta) 
 {
-    int threadsPerCUDABlock, CUDABlocks;
-    threadsPerCUDABlock = 128;
-    CUDABlocks = ceil((qreal)(qureg.numAmpsPerChunk>>2)/threadsPerCUDABlock);
-    statevec_controlledCompactUnitaryKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(qureg, controlQubit, targetQubit, alpha, beta);
+    int threadsPerCUDABlock = 128;
+    // statevec_controlledCompactUnitaryKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(qureg, controlQubit, targetQubit, alpha, beta);
+    for(int i = 0; i < gpuDeviceCount; ++i) {
+      cudaSetDevice(deviceId[i]);
+      cudaStreamSynchronize(streams[i]);
+    }
+    
+    long long int totalNumTasks=(qureg.numAmpsPerChunk>>2);
+    long long int start = 0;
+    
+    // printf("gpuDeviceCount = %d\n", gpuDeviceCount);
+    int deviceToUse = (controlQubit < 22 && targetQubit < 22) ? gpuDeviceCount : 1;
+    long long int block = (totalNumTasks + deviceToUse - 1) / deviceToUse;
+    for(int i = 0; i < deviceToUse; ++i, start += block) {
+      long long int end = start + block;
+      if(end > totalNumTasks) end = totalNumTasks;
+      long long int CUDABlocks = (end - start + threadsPerCUDABlock - 1) / threadsPerCUDABlock;
+
+      cudaSetDevice(deviceId[i]);
+      statevec_controlledCompactUnitaryKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[i]>>>(qureg, controlQubit, targetQubit, alpha, beta, start, end - start);
+    }
+    
+    for(int i = 0; i < deviceToUse; ++i) {
+      cudaSetDevice(deviceId[i]);
+      assert(cudaStreamSynchronize(streams[i]) == cudaSuccess);
+    }
+    cudaSetDevice(deviceId[0]);
+    assert(cudaDeviceSynchronize() == cudaSuccess);
 }
 
 __global__ void statevec_unitaryKernel(Qureg qureg, const int targetQubit, ComplexMatrix2 u){
@@ -1224,7 +1251,7 @@ void statevec_multiControlledPhaseFlip(Qureg qureg, int *controlQubits, int numC
 }
 
 
-__global__ void statevec_hadamardKernel (Qureg qureg, const int targetQubit){
+__global__ void statevec_hadamardKernel (Qureg qureg, const int targetQubit, const long long int taskStart, const long long int numTasks){
     // ----- sizes
     long long int sizeBlock,                                           // size of blocks
          sizeHalfBlock;                                       // size of blocks halved
@@ -1237,7 +1264,6 @@ __global__ void statevec_hadamardKernel (Qureg qureg, const int targetQubit){
            stateImagUp,stateImagLo;                             // (used in updates)
     // ----- temp variables
     long long int thisTask;                                   // task based approach for expose loop with small granularity
-    const long long int numTasks=qureg.numAmpsPerChunk>>1;
 
     sizeHalfBlock = 1LL << targetQubit;                               // size of blocks halved
     sizeBlock     = 2LL * sizeHalfBlock;                           // size of blocks
@@ -1254,6 +1280,7 @@ __global__ void statevec_hadamardKernel (Qureg qureg, const int targetQubit){
 
     thisTask = blockIdx.x*blockDim.x + threadIdx.x;
     if (thisTask>=numTasks) return;
+    thisTask += taskStart;
 
     thisBlock   = thisTask / sizeHalfBlock;
     indexUp     = thisBlock*sizeBlock + thisTask%sizeHalfBlock;
@@ -1275,10 +1302,35 @@ __global__ void statevec_hadamardKernel (Qureg qureg, const int targetQubit){
 
 void statevec_hadamard(Qureg qureg, const int targetQubit) 
 {
-    int threadsPerCUDABlock, CUDABlocks;
-    threadsPerCUDABlock = 128;
-    CUDABlocks = ceil((qreal)(qureg.numAmpsPerChunk>>1)/threadsPerCUDABlock);
-    statevec_hadamardKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(qureg, targetQubit);
+    int threadsPerCUDABlock = 128;
+    // statevec_hadamardKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(qureg, targetQubit);
+
+    for(int i = 0; i < gpuDeviceCount; ++i) {
+      cudaSetDevice(deviceId[i]);
+      cudaStreamSynchronize(streams[i]);
+    }
+    
+    long long int totalNumTasks=(qureg.numAmpsPerChunk>>2);
+    long long int start = 0;
+    
+    // printf("gpuDeviceCount = %d\n", gpuDeviceCount);
+    int deviceToUse = (targetQubit < 22) ? gpuDeviceCount : 1;
+    long long int block = (totalNumTasks + deviceToUse - 1) / deviceToUse;
+    for(int i = 0; i < deviceToUse; ++i, start += block) {
+      long long int end = start + block;
+      if(end > totalNumTasks) end = totalNumTasks;
+      long long int CUDABlocks = (end - start + threadsPerCUDABlock - 1) / threadsPerCUDABlock;
+
+      cudaSetDevice(deviceId[i]);
+      statevec_hadamardKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(qureg, targetQubit, start, end - start);
+    }
+    
+    for(int i = 0; i < deviceToUse; ++i) {
+      cudaSetDevice(deviceId[i]);
+      assert(cudaStreamSynchronize(streams[i]) == cudaSuccess);
+    }
+    cudaSetDevice(deviceId[0]);
+    assert(cudaDeviceSynchronize() == cudaSuccess);
 }
 
 __global__ void statevec_controlledNotKernel(Qureg qureg, const int controlQubit, const int targetQubit)
