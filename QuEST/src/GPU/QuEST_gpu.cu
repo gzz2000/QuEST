@@ -26,7 +26,11 @@ static __device__ int extractBit (int locationOfBitFromRight, long long int theE
 #ifdef __cplusplus
 extern "C" {
 #endif
-    
+
+#define MAX_GPUS 4
+
+int gpuDeviceCount;
+cudaStream_t streams[MAX_GPUS];
 
 // Bit manipulation utilities
 // From QuEST_multigpu.cu
@@ -105,7 +109,7 @@ void densmatr_initPureState(Qureg targetQureg, Qureg copyQureg)
     int threadsPerCUDABlock, CUDABlocks;
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil((qreal)(copyQureg.numAmpsPerChunk)/threadsPerCUDABlock);
-    densmatr_initPureStateKernel<<<CUDABlocks, threadsPerCUDABlock>>>(
+    densmatr_initPureStateKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(
         copyQureg.numAmpsPerChunk,
         targetQureg.deviceStateVec.real, targetQureg.deviceStateVec.imag,
         copyQureg.deviceStateVec.real,   copyQureg.deviceStateVec.imag);
@@ -127,7 +131,7 @@ void densmatr_initPlusState(Qureg qureg)
     int threadsPerCUDABlock, CUDABlocks;
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil((qreal)(qureg.numAmpsPerChunk)/threadsPerCUDABlock);
-    densmatr_initPlusStateKernel<<<CUDABlocks, threadsPerCUDABlock>>>(
+    densmatr_initPlusStateKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(
         qureg.numAmpsPerChunk, 
         probFactor,
         qureg.deviceStateVec.real, 
@@ -164,7 +168,7 @@ void densmatr_initClassicalState(Qureg qureg, long long int stateInd)
     long long int densityInd = (densityDim + 1)*stateInd;
     
     // identical to pure version
-    densmatr_initClassicalStateKernel<<<CUDABlocks, threadsPerCUDABlock>>>(
+    densmatr_initClassicalStateKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(
         qureg.numAmpsPerChunk, 
         qureg.deviceStateVec.real, 
         qureg.deviceStateVec.imag, densityInd);
@@ -202,10 +206,10 @@ void statevec_createQureg(Qureg *qureg, int numQubits, QuESTEnv env)
     qureg->isDensityMatrix = 0;
 
     // allocate GPU memory
-    cudaMalloc(&(qureg->deviceStateVec.real), qureg->numAmpsPerChunk*sizeof(*(qureg->deviceStateVec.real)));
-    cudaMalloc(&(qureg->deviceStateVec.imag), qureg->numAmpsPerChunk*sizeof(*(qureg->deviceStateVec.imag)));
-    cudaMalloc(&(qureg->firstLevelReduction), ceil(qureg->numAmpsPerChunk/(qreal)REDUCE_SHARED_SIZE)*sizeof(qreal));
-    cudaMalloc(&(qureg->secondLevelReduction), ceil(qureg->numAmpsPerChunk/(qreal)(REDUCE_SHARED_SIZE*REDUCE_SHARED_SIZE))*
+    cudaMallocManaged(&(qureg->deviceStateVec.real), qureg->numAmpsPerChunk*sizeof(*(qureg->deviceStateVec.real)));
+    cudaMallocManaged(&(qureg->deviceStateVec.imag), qureg->numAmpsPerChunk*sizeof(*(qureg->deviceStateVec.imag)));
+    cudaMallocManaged(&(qureg->firstLevelReduction), ceil(qureg->numAmpsPerChunk/(qreal)REDUCE_SHARED_SIZE)*sizeof(qreal));
+    cudaMallocManaged(&(qureg->secondLevelReduction), ceil(qureg->numAmpsPerChunk/(qreal)(REDUCE_SHARED_SIZE*REDUCE_SHARED_SIZE))*
             sizeof(qreal));
 
     // check gpu memory allocation was successful
@@ -232,20 +236,22 @@ void statevec_destroyQureg(Qureg qureg, QuESTEnv env)
 }
 
 int GPUExists(void){
-    int deviceCount, device;
-    int gpuDeviceCount = 0;
-    struct cudaDeviceProp properties;
-    cudaError_t cudaResultCode = cudaGetDeviceCount(&deviceCount);
-    if (cudaResultCode != cudaSuccess) deviceCount = 0;
-    /* machines with no GPUs can still report one emulation device */
-    for (device = 0; device < deviceCount; ++device) {
-        cudaGetDeviceProperties(&properties, device);
-        if (properties.major != 9999) { /* 9999 means emulation only */
-            ++gpuDeviceCount;
-        }
+  int deviceCount, device;
+  gpuDeviceCount = 0;
+  struct cudaDeviceProp properties;
+  cudaError_t cudaResultCode = cudaGetDeviceCount(&deviceCount);
+  if (cudaResultCode != cudaSuccess) deviceCount = 0;
+  /* machines with no GPUs can still report one emulation device */
+  for (device = 0; device < deviceCount; ++device) {
+    cudaGetDeviceProperties(&properties, device);
+    if (properties.major != 9999) { /* 9999 means emulation only */
+      cudaSetDevice(device);
+      cudaStreamCreate(&streams[gpuDeviceCount]);
+      ++gpuDeviceCount;
     }
-    if (gpuDeviceCount) return 1;
-    else return 0;
+  }
+  cudaSetDevice(0);
+  return gpuDeviceCount;
 }
 
 QuESTEnv createQuESTEnv(void) {
@@ -381,7 +387,7 @@ void statevec_initZeroState(Qureg qureg)
     int threadsPerCUDABlock, CUDABlocks;
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil((qreal)(qureg.numAmpsPerChunk)/threadsPerCUDABlock);
-    statevec_initZeroStateKernel<<<CUDABlocks, threadsPerCUDABlock>>>(
+    statevec_initZeroStateKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(
         qureg.numAmpsPerChunk, 
         qureg.deviceStateVec.real, 
         qureg.deviceStateVec.imag);
@@ -403,7 +409,7 @@ void statevec_initPlusState(Qureg qureg)
     int threadsPerCUDABlock, CUDABlocks;
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil((qreal)(qureg.numAmpsPerChunk)/threadsPerCUDABlock);
-    statevec_initPlusStateKernel<<<CUDABlocks, threadsPerCUDABlock>>>(
+    statevec_initPlusStateKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(
         qureg.numAmpsPerChunk, 
         qureg.deviceStateVec.real, 
         qureg.deviceStateVec.imag);
@@ -429,7 +435,7 @@ void statevec_initClassicalState(Qureg qureg, long long int stateInd)
     int threadsPerCUDABlock, CUDABlocks;
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil((qreal)(qureg.numAmpsPerChunk)/threadsPerCUDABlock);
-    statevec_initClassicalStateKernel<<<CUDABlocks, threadsPerCUDABlock>>>(
+    statevec_initClassicalStateKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(
         qureg.numAmpsPerChunk, 
         qureg.deviceStateVec.real, 
         qureg.deviceStateVec.imag, stateInd);
@@ -450,7 +456,7 @@ void statevec_initStateDebug(Qureg qureg)
     int threadsPerCUDABlock, CUDABlocks;
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil((qreal)(qureg.numAmpsPerChunk)/threadsPerCUDABlock);
-    statevec_initStateDebugKernel<<<CUDABlocks, threadsPerCUDABlock>>>(
+    statevec_initStateDebugKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(
         qureg.numAmpsPerChunk,
         qureg.deviceStateVec.real, 
         qureg.deviceStateVec.imag);
@@ -479,7 +485,7 @@ void statevec_initStateOfSingleQubit(Qureg *qureg, int qubitId, int outcome)
     int threadsPerCUDABlock, CUDABlocks;
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil((qreal)(qureg->numAmpsPerChunk)/threadsPerCUDABlock);
-    statevec_initStateOfSingleQubitKernel<<<CUDABlocks, threadsPerCUDABlock>>>(qureg->numAmpsPerChunk, qureg->deviceStateVec.real, qureg->deviceStateVec.imag, qubitId, outcome);
+    statevec_initStateOfSingleQubitKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(qureg->numAmpsPerChunk, qureg->deviceStateVec.real, qureg->deviceStateVec.imag, qubitId, outcome);
 }
 
 // returns 1 if successful, else 0
@@ -597,7 +603,7 @@ void statevec_compactUnitary(Qureg qureg, const int targetQubit, Complex alpha, 
     int threadsPerCUDABlock, CUDABlocks;
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil((qreal)(qureg.numAmpsPerChunk>>1)/threadsPerCUDABlock);
-    statevec_compactUnitaryKernel<<<CUDABlocks, threadsPerCUDABlock>>>(qureg, targetQubit, alpha, beta);
+    statevec_compactUnitaryKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(qureg, targetQubit, alpha, beta);
 }
 
 __global__ void statevec_controlledCompactUnitaryKernel (Qureg qureg, const int controlQubit, const int targetQubit, Complex alpha, Complex beta){
@@ -652,7 +658,7 @@ void statevec_controlledCompactUnitary(Qureg qureg, const int controlQubit, cons
     int threadsPerCUDABlock, CUDABlocks;
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil((qreal)(qureg.numAmpsPerChunk>>2)/threadsPerCUDABlock);
-    statevec_controlledCompactUnitaryKernel<<<CUDABlocks, threadsPerCUDABlock>>>(qureg, controlQubit, targetQubit, alpha, beta);
+    statevec_controlledCompactUnitaryKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(qureg, controlQubit, targetQubit, alpha, beta);
 }
 
 __global__ void statevec_unitaryKernel(Qureg qureg, const int targetQubit, ComplexMatrix2 u){
@@ -713,7 +719,7 @@ void statevec_unitary(Qureg qureg, const int targetQubit, ComplexMatrix2 u)
     int threadsPerCUDABlock, CUDABlocks;
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil((qreal)(qureg.numAmpsPerChunk>>1)/threadsPerCUDABlock);
-    statevec_unitaryKernel<<<CUDABlocks, threadsPerCUDABlock>>>(qureg, targetQubit, u);
+    statevec_unitaryKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(qureg, targetQubit, u);
 }
 
 __global__ void statevec_controlledUnitaryKernel(Qureg qureg, const int controlQubit, const int targetQubit, ComplexMatrix2 u){
@@ -779,7 +785,7 @@ void statevec_controlledUnitary(Qureg qureg, const int controlQubit, const int t
     int threadsPerCUDABlock, CUDABlocks;
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil((qreal)(qureg.numAmpsPerChunk>>1)/threadsPerCUDABlock);
-    statevec_controlledUnitaryKernel<<<CUDABlocks, threadsPerCUDABlock>>>(qureg, controlQubit, targetQubit, u);
+    statevec_controlledUnitaryKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(qureg, controlQubit, targetQubit, u);
 }
 
 __global__ void statevec_multiControlledUnitaryKernel(Qureg qureg, long long int mask, const int targetQubit, ComplexMatrix2 u){
@@ -845,7 +851,7 @@ void statevec_multiControlledUnitary(Qureg qureg, int *controlQubits, int numCon
     for (int i=0; i<numControlQubits; i++) mask = mask | (1LL<<controlQubits[i]);
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil((qreal)(qureg.numAmpsPerChunk>>1)/threadsPerCUDABlock);
-    statevec_multiControlledUnitaryKernel<<<CUDABlocks, threadsPerCUDABlock>>>(qureg, mask, targetQubit, u);
+    statevec_multiControlledUnitaryKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(qureg, mask, targetQubit, u);
 }
 
 __global__ void statevec_pauliXKernel(Qureg qureg, const int targetQubit){
@@ -897,7 +903,7 @@ void statevec_pauliX(Qureg qureg, const int targetQubit)
     int threadsPerCUDABlock, CUDABlocks;
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil((qreal)(qureg.numAmpsPerChunk>>1)/threadsPerCUDABlock);
-    statevec_pauliXKernel<<<CUDABlocks, threadsPerCUDABlock>>>(qureg, targetQubit);
+    statevec_pauliXKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(qureg, targetQubit);
 }
 
 __global__ void statevec_pauliYKernel(Qureg qureg, const int targetQubit, const int conjFac){
@@ -930,7 +936,7 @@ void statevec_pauliY(Qureg qureg, const int targetQubit)
     int threadsPerCUDABlock, CUDABlocks;
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil((qreal)(qureg.numAmpsPerChunk>>1)/threadsPerCUDABlock);
-    statevec_pauliYKernel<<<CUDABlocks, threadsPerCUDABlock>>>(qureg, targetQubit, 1);
+    statevec_pauliYKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(qureg, targetQubit, 1);
 }
 
 void statevec_pauliYConj(Qureg qureg, const int targetQubit) 
@@ -938,7 +944,7 @@ void statevec_pauliYConj(Qureg qureg, const int targetQubit)
     int threadsPerCUDABlock, CUDABlocks;
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil((qreal)(qureg.numAmpsPerChunk>>1)/threadsPerCUDABlock);
-    statevec_pauliYKernel<<<CUDABlocks, threadsPerCUDABlock>>>(qureg, targetQubit, -1);
+    statevec_pauliYKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(qureg, targetQubit, -1);
 }
 
 __global__ void statevec_controlledPauliYKernel(Qureg qureg, const int controlQubit, const int targetQubit, const int conjFac)
@@ -983,7 +989,7 @@ void statevec_controlledPauliY(Qureg qureg, const int controlQubit, const int ta
     int threadsPerCUDABlock, CUDABlocks;
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil((qreal)(qureg.numAmpsPerChunk)/threadsPerCUDABlock);
-    statevec_controlledPauliYKernel<<<CUDABlocks, threadsPerCUDABlock>>>(qureg, controlQubit, targetQubit, conjFactor);
+    statevec_controlledPauliYKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(qureg, controlQubit, targetQubit, conjFactor);
 }
 
 void statevec_controlledPauliYConj(Qureg qureg, const int controlQubit, const int targetQubit)
@@ -992,7 +998,7 @@ void statevec_controlledPauliYConj(Qureg qureg, const int controlQubit, const in
     int threadsPerCUDABlock, CUDABlocks;
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil((qreal)(qureg.numAmpsPerChunk)/threadsPerCUDABlock);
-    statevec_controlledPauliYKernel<<<CUDABlocks, threadsPerCUDABlock>>>(qureg, controlQubit, targetQubit, conjFactor);
+    statevec_controlledPauliYKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(qureg, controlQubit, targetQubit, conjFactor);
 }
 
 __global__ void statevec_phaseShiftByTermKernel(Qureg qureg, const int targetQubit, qreal cosAngle, qreal sinAngle) {
@@ -1031,7 +1037,7 @@ void statevec_phaseShiftByTerm(Qureg qureg, const int targetQubit, Complex term)
     int threadsPerCUDABlock, CUDABlocks;
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil((qreal)(qureg.numAmpsPerChunk>>1)/threadsPerCUDABlock);
-    statevec_phaseShiftByTermKernel<<<CUDABlocks, threadsPerCUDABlock>>>(qureg, targetQubit, cosAngle, sinAngle);
+    statevec_phaseShiftByTermKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(qureg, targetQubit, cosAngle, sinAngle);
 }
 
 __global__ void statevec_controlledPhaseShiftKernel(Qureg qureg, const int idQubit1, const int idQubit2, qreal cosAngle, qreal sinAngle)
@@ -1067,7 +1073,7 @@ void statevec_controlledPhaseShift(Qureg qureg, const int idQubit1, const int id
     int threadsPerCUDABlock, CUDABlocks;
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil((qreal)(qureg.numAmpsPerChunk>>1)/threadsPerCUDABlock);
-    statevec_controlledPhaseShiftKernel<<<CUDABlocks, threadsPerCUDABlock>>>(qureg, idQubit1, idQubit2, cosAngle, sinAngle);
+    statevec_controlledPhaseShiftKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(qureg, idQubit1, idQubit2, cosAngle, sinAngle);
 }
 
 __global__ void statevec_multiControlledPhaseShiftKernel(Qureg qureg, long long int mask, qreal cosAngle, qreal sinAngle) {
@@ -1102,7 +1108,7 @@ void statevec_multiControlledPhaseShift(Qureg qureg, int *controlQubits, int num
     int threadsPerCUDABlock, CUDABlocks;
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil((qreal)(qureg.numAmpsPerChunk)/threadsPerCUDABlock);
-    statevec_multiControlledPhaseShiftKernel<<<CUDABlocks, threadsPerCUDABlock>>>(qureg, mask, cosAngle, sinAngle);
+    statevec_multiControlledPhaseShiftKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(qureg, mask, cosAngle, sinAngle);
 }
 
 qreal densmatr_calcTotalProb(Qureg qureg) {
@@ -1186,7 +1192,7 @@ void statevec_controlledPhaseFlip(Qureg qureg, const int idQubit1, const int idQ
     int threadsPerCUDABlock, CUDABlocks;
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil((qreal)(qureg.numAmpsPerChunk)/threadsPerCUDABlock);
-    statevec_controlledPhaseFlipKernel<<<CUDABlocks, threadsPerCUDABlock>>>(qureg, idQubit1, idQubit2);
+    statevec_controlledPhaseFlipKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(qureg, idQubit1, idQubit2);
 }
 
 __global__ void statevec_multiControlledPhaseFlipKernel(Qureg qureg, long long int mask)
@@ -1214,7 +1220,7 @@ void statevec_multiControlledPhaseFlip(Qureg qureg, int *controlQubits, int numC
     for (int i=0; i<numControlQubits; i++) mask = mask | (1LL<<controlQubits[i]);
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil((qreal)(qureg.numAmpsPerChunk)/threadsPerCUDABlock);
-    statevec_multiControlledPhaseFlipKernel<<<CUDABlocks, threadsPerCUDABlock>>>(qureg, mask);
+    statevec_multiControlledPhaseFlipKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(qureg, mask);
 }
 
 
@@ -1272,7 +1278,7 @@ void statevec_hadamard(Qureg qureg, const int targetQubit)
     int threadsPerCUDABlock, CUDABlocks;
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil((qreal)(qureg.numAmpsPerChunk>>1)/threadsPerCUDABlock);
-    statevec_hadamardKernel<<<CUDABlocks, threadsPerCUDABlock>>>(qureg, targetQubit);
+    statevec_hadamardKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(qureg, targetQubit);
 }
 
 __global__ void statevec_controlledNotKernel(Qureg qureg, const int controlQubit, const int targetQubit)
@@ -1319,7 +1325,7 @@ void statevec_controlledNot(Qureg qureg, const int controlQubit, const int targe
     int threadsPerCUDABlock, CUDABlocks;
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil((qreal)(qureg.numAmpsPerChunk)/threadsPerCUDABlock);
-    statevec_controlledNotKernel<<<CUDABlocks, threadsPerCUDABlock>>>(qureg, controlQubit, targetQubit);
+    statevec_controlledNotKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(qureg, controlQubit, targetQubit);
 }
 
 __device__ __host__ unsigned int log2Int( unsigned int x )
@@ -1487,14 +1493,14 @@ qreal densmatr_findProbabilityOfZero(Qureg qureg, const int measureQubit)
         
         // spawn threads to sum the probs in each block
         if (firstTime) {
-            densmatr_findProbabilityOfZeroKernel<<<numCUDABlocks, valuesPerCUDABlock, sharedMemSize>>>(
+            densmatr_findProbabilityOfZeroKernel<<<numCUDABlocks, valuesPerCUDABlock, sharedMemSize, streams[0]>>>(
                 qureg, measureQubit, qureg.firstLevelReduction);
             firstTime = 0;
             
         // sum the block probs
         } else {
             cudaDeviceSynchronize();    
-            copySharedReduceBlock<<<numCUDABlocks, valuesPerCUDABlock/2, sharedMemSize>>>(
+            copySharedReduceBlock<<<numCUDABlocks, valuesPerCUDABlock/2, sharedMemSize, streams[0]>>>(
                     qureg.firstLevelReduction, 
                     qureg.secondLevelReduction, valuesPerCUDABlock); 
             cudaDeviceSynchronize();    
@@ -1530,12 +1536,12 @@ qreal statevec_findProbabilityOfZero(Qureg qureg, const int measureQubit)
         sharedMemSize = valuesPerCUDABlock*sizeof(qreal);
 
         if (firstTime){
-            statevec_findProbabilityOfZeroKernel<<<numCUDABlocks, valuesPerCUDABlock, sharedMemSize>>>(
+            statevec_findProbabilityOfZeroKernel<<<numCUDABlocks, valuesPerCUDABlock, sharedMemSize, streams[0]>>>(
                     qureg, measureQubit, qureg.firstLevelReduction);
             firstTime=0;
         } else {
             cudaDeviceSynchronize();    
-            copySharedReduceBlock<<<numCUDABlocks, valuesPerCUDABlock/2, sharedMemSize>>>(
+            copySharedReduceBlock<<<numCUDABlocks, valuesPerCUDABlock/2, sharedMemSize, streams[0]>>>(
                     qureg.firstLevelReduction, 
                     qureg.secondLevelReduction, valuesPerCUDABlock); 
             cudaDeviceSynchronize();    
@@ -1621,7 +1627,7 @@ Complex statevec_calcInnerProduct(Qureg bra, Qureg ket) {
         }
         sharedMemSize = valuesPerCUDABlock*sizeof(qreal);
         if (firstTime) {
-             statevec_calcInnerProductKernel<<<numCUDABlocks, valuesPerCUDABlock, sharedMemSize>>>(
+             statevec_calcInnerProductKernel<<<numCUDABlocks, valuesPerCUDABlock, sharedMemSize, streams[0]>>>(
                  getRealComp,
                  bra.deviceStateVec.real, bra.deviceStateVec.imag, 
                  ket.deviceStateVec.real, ket.deviceStateVec.imag, 
@@ -1630,7 +1636,7 @@ Complex statevec_calcInnerProduct(Qureg bra, Qureg ket) {
             firstTime = 0;
         } else {
             cudaDeviceSynchronize();    
-            copySharedReduceBlock<<<numCUDABlocks, valuesPerCUDABlock/2, sharedMemSize>>>(
+            copySharedReduceBlock<<<numCUDABlocks, valuesPerCUDABlock/2, sharedMemSize, streams[0]>>>(
                     bra.firstLevelReduction, 
                     bra.secondLevelReduction, valuesPerCUDABlock); 
             cudaDeviceSynchronize();    
@@ -1656,7 +1662,7 @@ Complex statevec_calcInnerProduct(Qureg bra, Qureg ket) {
         }
         sharedMemSize = valuesPerCUDABlock*sizeof(qreal);
         if (firstTime) {
-             statevec_calcInnerProductKernel<<<numCUDABlocks, valuesPerCUDABlock, sharedMemSize>>>(
+             statevec_calcInnerProductKernel<<<numCUDABlocks, valuesPerCUDABlock, sharedMemSize, streams[0]>>>(
                  getRealComp,
                  bra.deviceStateVec.real, bra.deviceStateVec.imag, 
                  ket.deviceStateVec.real, ket.deviceStateVec.imag, 
@@ -1665,7 +1671,7 @@ Complex statevec_calcInnerProduct(Qureg bra, Qureg ket) {
             firstTime = 0;
         } else {
             cudaDeviceSynchronize();    
-            copySharedReduceBlock<<<numCUDABlocks, valuesPerCUDABlock/2, sharedMemSize>>>(
+            copySharedReduceBlock<<<numCUDABlocks, valuesPerCUDABlock/2, sharedMemSize, streams[0]>>>(
                     bra.firstLevelReduction, 
                     bra.secondLevelReduction, valuesPerCUDABlock); 
             cudaDeviceSynchronize();    
@@ -1750,14 +1756,14 @@ qreal densmatr_calcFidelity(Qureg qureg, Qureg pureState) {
         // spawn threads to sum the probs in each block
         // store the reduction in the pureState array
         if (firstTime) {
-             densmatr_calcFidelityKernel<<<numCUDABlocks, valuesPerCUDABlock, sharedMemSize>>>(
+             densmatr_calcFidelityKernel<<<numCUDABlocks, valuesPerCUDABlock, sharedMemSize, streams[0]>>>(
                  qureg, pureState, densityDim, pureState.firstLevelReduction);
             firstTime = 0;
             
         // sum the block probs
         } else {
             cudaDeviceSynchronize();    
-            copySharedReduceBlock<<<numCUDABlocks, valuesPerCUDABlock/2, sharedMemSize>>>(
+            copySharedReduceBlock<<<numCUDABlocks, valuesPerCUDABlock/2, sharedMemSize, streams[0]>>>(
                     pureState.firstLevelReduction, 
                     pureState.secondLevelReduction, valuesPerCUDABlock); 
             cudaDeviceSynchronize();    
@@ -1818,7 +1824,7 @@ qreal densmatr_calcPurity(Qureg qureg) {
         
         // spawn threads to sum the probs in each block
         if (firstTime) {
-             densmatr_calcPurityKernel<<<numCUDABlocks, valuesPerCUDABlock, sharedMemSize>>>(
+             densmatr_calcPurityKernel<<<numCUDABlocks, valuesPerCUDABlock, sharedMemSize, streams[0]>>>(
                  qureg.deviceStateVec.real, qureg.deviceStateVec.imag, 
                  numValuesToReduce, qureg.firstLevelReduction);
             firstTime = 0;
@@ -1826,7 +1832,7 @@ qreal densmatr_calcPurity(Qureg qureg) {
         // sum the block probs
         } else {
             cudaDeviceSynchronize();    
-            copySharedReduceBlock<<<numCUDABlocks, valuesPerCUDABlock/2, sharedMemSize>>>(
+            copySharedReduceBlock<<<numCUDABlocks, valuesPerCUDABlock/2, sharedMemSize, streams[0]>>>(
                     qureg.firstLevelReduction, 
                     qureg.secondLevelReduction, valuesPerCUDABlock); 
             cudaDeviceSynchronize();    
@@ -1903,7 +1909,7 @@ void statevec_collapseToKnownProbOutcome(Qureg qureg, const int measureQubit, in
     int threadsPerCUDABlock, CUDABlocks;
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil((qreal)(qureg.numAmpsPerChunk>>1)/threadsPerCUDABlock);
-    statevec_collapseToKnownProbOutcomeKernel<<<CUDABlocks, threadsPerCUDABlock>>>(qureg, measureQubit, outcome, outcomeProb);
+    statevec_collapseToKnownProbOutcomeKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(qureg, measureQubit, outcome, outcomeProb);
 }
 
 /** Maps thread ID to a |..0..><..0..| state and then locates |0><1|, |1><0| and |1><1| */
@@ -1957,7 +1963,7 @@ void densmatr_collapseToKnownProbOutcome(Qureg qureg, const int measureQubit, in
     int threadsPerCUDABlock, CUDABlocks;
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil(numBasesToVisit / (qreal) threadsPerCUDABlock);
-    densmatr_collapseToKnownProbOutcomeKernel<<<CUDABlocks, threadsPerCUDABlock>>>(
+    densmatr_collapseToKnownProbOutcomeKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(
         outcomeProb, qureg.deviceStateVec.real, qureg.deviceStateVec.imag, numBasesToVisit,
         part1, part2, part3, rowBit, colBit, desired, undesired);
 }
@@ -1981,7 +1987,7 @@ void densmatr_addDensityMatrix(Qureg combineQureg, qreal otherProb, Qureg otherQ
     int threadsPerCUDABlock, CUDABlocks;
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil(numAmpsToVisit / (qreal) threadsPerCUDABlock);
-    densmatr_addDensityMatrixKernel<<<CUDABlocks, threadsPerCUDABlock>>>(
+    densmatr_addDensityMatrixKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(
         combineQureg, otherProb, otherQureg, numAmpsToVisit
     );
 }
@@ -2022,7 +2028,7 @@ void densmatr_oneQubitDegradeOffDiagonal(Qureg qureg, const int targetQubit, qre
     int threadsPerCUDABlock, CUDABlocks;
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil(numAmpsToVisit / (qreal) threadsPerCUDABlock);
-    densmatr_oneQubitDephaseKernel<<<CUDABlocks, threadsPerCUDABlock>>>(
+    densmatr_oneQubitDephaseKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(
         dephFac, qureg.deviceStateVec.real, qureg.deviceStateVec.imag, numAmpsToVisit,
         part1, part2, part3, colBit, rowBit);
 }
@@ -2097,7 +2103,7 @@ void densmatr_twoQubitDephase(Qureg qureg, int qubit1, int qubit2, qreal dephase
     int threadsPerCUDABlock, CUDABlocks;
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil(numAmpsToVisit / (qreal) threadsPerCUDABlock);
-    densmatr_twoQubitDephaseKernel<<<CUDABlocks, threadsPerCUDABlock>>>(
+    densmatr_twoQubitDephaseKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(
         dephFac, qureg.deviceStateVec.real, qureg.deviceStateVec.imag, numBackgroundStates, numAmpsToVisit,
         part1, part2, part3, part4, part5, colBit1, rowBit1, colBit2, rowBit2);
 }
@@ -2171,7 +2177,7 @@ void densmatr_oneQubitDepolarise(Qureg qureg, const int targetQubit, qreal depol
     int threadsPerCUDABlock, CUDABlocks;
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil(numAmpsToVisit / (qreal) threadsPerCUDABlock);
-    densmatr_oneQubitDepolariseKernel<<<CUDABlocks, threadsPerCUDABlock>>>(
+    densmatr_oneQubitDepolariseKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(
         depolLevel, qureg.deviceStateVec.real, qureg.deviceStateVec.imag, numAmpsToVisit,
         part1, part2, part3, bothBits);
 }
@@ -2198,7 +2204,7 @@ void densmatr_oneQubitDamping(Qureg qureg, const int targetQubit, qreal damping)
     int threadsPerCUDABlock, CUDABlocks;
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil(numAmpsToVisit / (qreal) threadsPerCUDABlock);
-    densmatr_oneQubitDampingKernel<<<CUDABlocks, threadsPerCUDABlock>>>(
+    densmatr_oneQubitDampingKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(
         damping, qureg.deviceStateVec.real, qureg.deviceStateVec.imag, numAmpsToVisit,
         part1, part2, part3, bothBits);
 }
@@ -2266,7 +2272,7 @@ void densmatr_twoQubitDepolarise(Qureg qureg, int qubit1, int qubit2, qreal depo
     int threadsPerCUDABlock, CUDABlocks;
     threadsPerCUDABlock = 128;
     CUDABlocks = ceil(numAmpsToVisit / (qreal) threadsPerCUDABlock);
-    densmatr_twoQubitDepolariseKernel<<<CUDABlocks, threadsPerCUDABlock>>>(
+    densmatr_twoQubitDepolariseKernel<<<CUDABlocks, threadsPerCUDABlock, 0, streams[0]>>>(
         depolLevel, qureg.deviceStateVec.real, qureg.deviceStateVec.imag, numAmpsToVisit,
         part1, part2, part3, part4, part5, rowCol1, rowCol2);
 }
